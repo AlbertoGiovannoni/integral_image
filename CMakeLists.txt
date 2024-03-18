@@ -6,6 +6,7 @@ set(CMAKE_CUDA_STANDARD 17)
 # Aggiungi tutti i file sorgente CUDA al progetto
 set(CUDA_SOURCE_FILES
         parallel.cu
+        scan.cu
 )
 
 # Aggiungi tutti i file sorgente C++ al progetto
@@ -17,6 +18,11 @@ set(CPP_SOURCE_FILES
 add_executable(integral_image_parallel parallel.cu)
 add_executable(integral_image_sequential sequential.cpp)
 
+add_executable(scan scan.cu)
+
+set_target_properties(scan PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+)
 
 # Imposta la compilazione separabile per il codice CUDA
 set_target_properties(integral_image_parallel PROPERTIES

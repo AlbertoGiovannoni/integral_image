@@ -62,10 +62,10 @@ int* integralImage_optimized(int* image, int* integImg, int width, int height) {
 }
 
 int main() {
-    int height = 3;
-    int width = 3;
-    bool printOutput = true;
-    bool naive = true;
+    int height = 10000;
+    int width = 10000;
+    bool printOutput = false;
+    bool naive = false;
 
     int* image = createImage(height, width);
     int* integImg = (int*)malloc(width * height * sizeof(int));
