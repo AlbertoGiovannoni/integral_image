@@ -1,20 +1,26 @@
+/*
 #include <stdio.h>
 
-#define BLOCK_SIZE 256
+#define BLOCK_SIZE 16
+#define INPUT_SIZE 16
 
-__global__ void scan(int *XY, int InputSize, int *Y) {
-    __shared__ int XY_shared[2 * BLOCK_SIZE];
 
+__global__ void scan(int *input, int inputSize, int *output) {
+    __shared__ int tmp[2 * BLOCK_SIZE];
+
+    int row = blockIdx.x;
     int idx = threadIdx.x;
-    XY_shared[2 * idx] = (2 * idx < InputSize) ? XY[2 * idx] : 0;
-    XY_shared[2 * idx + 1] = (2 * idx + 1 < InputSize) ? XY[2 * idx + 1] : 0;
+    int offset = row * inputSize;
+
+    tmp[2 * idx] = (2 * idx < inputSize) ? input[2 * idx] : 0;
+    tmp[2 * idx + 1] = (2 * idx + 1 < inputSize) ? input[2 * idx + 1] : 0;
 
     // Up Sweep
     for (unsigned int stride = 1; stride <= BLOCK_SIZE; stride *= 2) {
         __syncthreads();
         int index = (idx + 1) * stride * 2 - 1;
         if (index < 2 * BLOCK_SIZE)
-            XY_shared[index] += XY_shared[index - stride];
+            tmp[index] += tmp[index - stride];
     }
 
     // Down Sweep
@@ -22,40 +28,147 @@ __global__ void scan(int *XY, int InputSize, int *Y) {
         __syncthreads();
         int index = (idx + 1) * stride * 2 - 1;
         if (index + stride < 2 * BLOCK_SIZE) {
-            XY_shared[index + stride] += XY_shared[index];
+            tmp[index + stride] += tmp[index];
         }
     }
     __syncthreads();
 
-    if (idx < InputSize)
-        Y[idx] = XY_shared[idx];
+    if (idx < inputSize)
+        output[idx] = tmp[idx];
 }
 
 int main() {
-    const int InputSize = 16;
-    const int arrayBytes = InputSize * sizeof(int);
+    const int inputSize = INPUT_SIZE;
+    const int arrayBytes = inputSize * sizeof(int);
 
-    int h_XY[InputSize] = {1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16};
-    int *d_XY, *d_Y;
+    int *h_input = (int *) malloc(arrayBytes);
+    // Riempo input
+    for (int i=0; i<inputSize; i++){
+        h_input[i] = i+1;
+    }
 
-    cudaMalloc((void **)&d_XY, arrayBytes);
-    cudaMemcpy(d_XY, h_XY, arrayBytes, cudaMemcpyHostToDevice);
+    int *d_input, *d_output;
 
-    cudaMalloc((void **)&d_Y, arrayBytes);
+    cudaMalloc((void **)&d_input, arrayBytes);
+    cudaMemcpy(d_input, h_input, arrayBytes, cudaMemcpyHostToDevice);
 
-    scan<<<1, BLOCK_SIZE>>>(d_XY, InputSize, d_Y);
+    cudaMalloc((void **)&d_output, arrayBytes);
 
-    int h_Y[InputSize];
-    cudaMemcpy(h_Y, d_Y, arrayBytes, cudaMemcpyDeviceToHost);
+    scan<<<1, BLOCK_SIZE>>>(d_input, inputSize, d_output);
 
-    printf("Inclusive Scan Result:\n");
-    for (int i = 0; i < InputSize; i++) {
-        printf("%d ", h_Y[i]);
+    int *h_output = (int *) malloc(arrayBytes);
+    cudaMemcpy(h_output, d_output, arrayBytes, cudaMemcpyDeviceToHost);
+
+    printf("Scan Result:\n");
+    for (int i = 0; i < inputSize; i++) {
+        printf("%d ", h_output[i]);
     }
     printf("\n");
 
-    cudaFree(d_XY);
-    cudaFree(d_Y);
+    free(h_input);
+    free(h_output);
+    cudaFree(d_input);
+    cudaFree(d_output);
 
     return 0;
 }
+*/
+
+
+
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include "define.h"
+
+
+__global__ void scanParallel(long long int *d_input, long long int *d_output, int inputSize, long long int *sum) {
+    __shared__ long long int tmp[2 * BLOCK_SIZE_S];
+    int row = blockIdx.x;
+    int idx = threadIdx.x;
+    int offset = row * inputSize;
+
+    // todo
+    /*tmp[2 * idx] = (idx * 2 < inputSize) ? input[offset + idx * 2] : 0; // offset + idx rappresenta l'indice globale
+    tmp[2 * idx + 1] = (idx * 2 + 1 < inputSize) ? input[offset + idx * 2 + 1] : 0;*/
+
+    tmp[2 * idx] = d_input[offset + idx * 2]; // offset + idx rappresenta l'indice globale
+    tmp[2 * idx + 1] = d_input[offset + idx * 2 + 1];
+
+    // Up Sweep
+    for (unsigned int stride = 1; stride <= BLOCK_SIZE_S; stride *= 2) {
+        __syncthreads();
+        int index = (idx + 1) * stride * 2 - 1;
+        if (index < 2 * BLOCK_SIZE_S)
+            tmp[index] += tmp[index - stride];
+    }
+
+    // Down Sweep
+    for (unsigned int stride = BLOCK_SIZE_S / 2; stride > 0; stride /= 2) {
+        __syncthreads();
+        int index = (idx + 1) * stride * 2 - 1;
+        if (index + stride < 2 * BLOCK_SIZE_S) {
+            tmp[index + stride] += tmp[index];
+        }
+    }
+    __syncthreads();
+
+    //if (idx < inputSize)
+    d_output[offset + idx] = tmp[idx];
+
+    if (idx == BLOCK_SIZE_S - 1) {
+        sum[row] = tmp[idx];
+    }
+
+}
+
+__global__ void add(long long int *output, int length, long long int *n) {
+    int blockID = blockIdx.x;
+    //int threadID = threadIdx.x;
+
+    int blockOffset = blockID * length;
+    output[blockOffset] += n[blockID];
+}
+
+void scan(long long int *d_input, long long int *d_output, long long int *sum,int inputSize, int blockSize){
+    const int numBlocks = (inputSize + blockSize - 1) / blockSize;
+    printf("%d ", numBlocks);
+
+    for (int i = 0; i < numBlocks; i++) {
+        // Calcola l'offset in base al blocco corrente
+        int offset = i * blockSize;
+
+        // Esegui la scan sulla porzione corrente del vettore di input
+        scanParallel<<<inputSize, blockSize>>>(d_input + offset, d_output + offset, inputSize, sum);
+        // Esegui l'add sulla porzione corrente del vettore di output
+        if (i < numBlocks - 1)
+            add<<<inputSize, blockSize>>>(d_input + blockSize * (i + 1), inputSize, sum);
+    }
+}
+
+/*int main2() {
+    const int inputSize = INPUT_SIZE;
+    const int blockSize = BLOCK_SIZE;
+    bool printOutput = true;
+    //const int inputBytes = inputSize * inputSize * sizeof(int); // matrici quadrate
+    const long long int longBytes = inputSize * inputSize * sizeof(long long int);
+    const int numBlocks = (inputSize + blockSize - 1) / blockSize;
+
+
+    long long int *h_input = (long long int *) malloc(longBytes);
+    // Popolo la matrice
+    int c = 1;
+    for (int j = 0; j < inputSize; j++) {
+        for (int i = 0; i < inputSize; i++) {
+            h_input[j * inputSize + i] = c;
+            c++;
+        }
+    }
+
+    long long int *h_output = (long long int *) malloc(longBytes);
+    //scan(h_input, h_output, inputSize, blockSize, printOutput);
+
+
+    free(h_input);
+    free(h_output);
+    return 0;
+}*/

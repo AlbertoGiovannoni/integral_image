@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
-#define BLOCK_SIZE 16
-
+#include "transpose.cu"
+#include "scan.cu"
+#include "define.h"
 
 int getSPcores(cudaDeviceProp devProp) {
     int cores = 0;
@@ -43,120 +44,114 @@ int getSPcores(cudaDeviceProp devProp) {
     return cores;
 }
 
-int *createImage(int *img, int width, int height) {
+long long int *createImage(long long int *img, int width, int height) {
     for (int i = 0; i < width * height; ++i) {
         img[i] = i + 1;
     }
     return img;
 }
 
-__host__ void printImageValues(int *image, int width, int height) {
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
-            printf("%d ", image[i * width + j]);
+__host__ void printValues(long long int *image, int width, int height, const char *label, const long long int longBytes) {
+    long long int *h_output = (long long int *) malloc(longBytes);
+    cudaMemcpy(h_output, image, longBytes, cudaMemcpyDeviceToHost);
+
+    printf("%s", label);
+    int k = 0;
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+                printf("%lld ", h_output[k]);
+            k++;
         }
         printf("\n");
     }
 }
 
-__global__ void imageIntegral(int *img, int *integImg, int width, int height) {
-    // Indici globali
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (x < width && y < height) {
-        int index = y * width + x;
-        int sum = 0;
-
-        // Calcola l'integrale dell'immagine per la riga corrente
-        for (int i = 0; i <= x; i++) {
-            for (int j = 0; j <= y; j++) {
-                sum += img[j * width + i];
-            }
-        }
-
-        // Scrive il risultato nell'immagine integrale
-        integImg[index] = sum;
-    }
-}
-
 int main() {
-    int height = 3;
-    int width = 3;
-    int block_dim = 32;
-    bool printOutput = true;
-    int imgSize = height * width * sizeof(int);
-    int integImgSize = height * width * sizeof(int);
+    bool printOutput = false;
+    const long long int longBytes = INPUT_SIZE * INPUT_SIZE * sizeof(long long int);
 
     // Stampa delle specifiche hardware
-    cudaDeviceProp deviceProp;
+    cudaDeviceProp deviceProp{};
     cudaGetDeviceProperties(&deviceProp, 0);
     printf("Device: %s\n", deviceProp.name);
     printf("Cores number: %d\n", getSPcores(deviceProp));
 
-    // Allocazione memoria CPU
-    int *cpu_img = (int *) malloc(imgSize);
-    cpu_img = createImage(cpu_img, width, height);
-
-    // Allocazione memoria GPU
-    int *gpu_img;
-    int *gpu_integImg;
-    cudaMalloc((void **) &gpu_img, imgSize);
-    cudaMalloc((void **) &gpu_integImg, integImgSize);
-
-    // Copia dei dati da cpu a gpu
-    cudaMemcpy(gpu_img, cpu_img, imgSize, cudaMemcpyHostToDevice);
-
-    // Grid e Block
-    dim3 block(block_dim, block_dim);
-    dim3 grid((width + block_dim - 1) / block_dim, (height + block_dim - 1) / block_dim);
-
-    // Tempo
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-    cudaEventRecord(start);
-    imageIntegral<<<grid, block>>>(gpu_img, gpu_integImg, width, height);
-    printf("%d", width*height);
-
-    cudaEventRecord(stop);
-
-    cudaEventSynchronize(stop);
-
-    if (printOutput) {
-        int *cpu_integImg = (int *) malloc(imgSize);
-        cudaMemcpy(cpu_integImg, gpu_integImg, imgSize, cudaMemcpyDeviceToHost);
-        printImageValues(cpu_integImg, width, height);
-        free(cpu_integImg);
-    }
-
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("Tempo di esecuzione: %.2f millisecondi\n", milliseconds);
+    // Popolo la matrice
+    long long int *h_input = (long long int *) malloc(longBytes);
+    h_input = createImage(h_input, INPUT_SIZE, INPUT_SIZE);
 
 
-    cudaEvent_t start1, stop1;
-    cudaEventCreate(&start1);
-    cudaEventCreate(&stop1);
+    // tutte le malloc
 
-    cudaEventRecord(start1);
-    cudaEventRecord(stop1);
+    // T1
+    long long int *d_outputT1;
+    cudaMalloc((void **) &d_outputT1, longBytes);
+    dim3 dimGrid(INPUT_SIZE / TILE_SIZE_T, INPUT_SIZE / TILE_SIZE_T, 1);
+    dim3 dimBlock(TILE_SIZE_T, BLOCK_SIZE_T, 1);
 
-    cudaEventSynchronize(stop1);
-    float milliseconds1 = 0;
-    cudaEventElapsedTime(&milliseconds1, start1, stop1);
-    printf("Tempo di esecuzione dfwefxews: %.2f millisecondi\n", milliseconds1);
-
-    int *cpu_integImg = (int *) malloc(imgSize);
-    cudaMemcpy(cpu_integImg, gpu_integImg, imgSize, cudaMemcpyDeviceToHost);
-    printImageValues(cpu_integImg, width, height);
-    printf("%d ", cpu_integImg[1]);
-    free(cpu_integImg);
+    // T2
+    long long int *d_outputT2;
+    cudaMalloc((void **) &d_outputT2, longBytes);
 
 
-    free(cpu_img);
-    cudaFree(gpu_img);
-    cudaFree(gpu_integImg);
+
+
+    cudaEvent_t startTot, stopTot;
+    cudaEventCreate(&startTot);
+    cudaEventCreate(&stopTot);
+
+    // Scan 1
+    long long int *d_input, *d_outputS;
+    cudaMalloc((void **) &d_input, longBytes);
+    cudaMemcpy(d_input, h_input, longBytes, cudaMemcpyHostToDevice);
+    cudaMalloc((void **) &d_outputS, longBytes);
+    long long int *sum; // vettore somme parziali
+    cudaMalloc((void **) &sum, longBytes);
+
+    long long int *h_output = (long long int *) malloc(longBytes);
+
+
+
+    cudaEventRecord(startTot);
+    scan(d_input, d_outputS, sum, INPUT_SIZE, BLOCK_SIZE_S);
+
+    if(printOutput)
+        printValues(d_outputS, INPUT_SIZE, INPUT_SIZE, "Scan 1 results: \n", longBytes);
+
+    // Transpose 1
+    transposeCoalesced<<<dimGrid, dimBlock>>>(d_outputS, d_outputT1);
+
+    if(printOutput)
+        printValues(d_outputT1, INPUT_SIZE, INPUT_SIZE, "Transpose 1 results: \n", longBytes);
+
+    // Scan 2
+    scan(d_outputT1, d_outputS, sum, INPUT_SIZE, BLOCK_SIZE_S);
+
+    if(printOutput)
+        printValues(d_outputS, INPUT_SIZE, INPUT_SIZE, "Scan 2 results: \n", longBytes);
+
+    // Trasposta perchè fin qui ho la trasposta dell immagine integrale
+    transposeCoalesced<<<dimGrid, dimBlock>>>(d_outputS, d_outputT2);
+
+    cudaEventRecord(stopTot);
+    cudaEventSynchronize(stopTot);
+
+    float millisecondsTot = 0;
+    cudaEventElapsedTime(&millisecondsTot, startTot, stopTot);
+
+    printf("\nTotal time: %f milliseconds\n", millisecondsTot);
+
+
+    if(printOutput)
+        printValues(d_outputT2, INPUT_SIZE, INPUT_SIZE, "Transpose 2 results: \n", longBytes);
+
+
+    // Deallocazione della memoria
+    free(h_input);
+    free(h_output);
+    cudaFree(d_input);
+    cudaFree(d_outputS);
+
     return 0;
 }
+

@@ -2,25 +2,26 @@
 #include <vector>
 #include <chrono>
 
-void imagePrint(int* image, int width, int height) {
+void imagePrint(long long int* image, int width, int height) {
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
+
             std::cout << image[i * width + j] << " ";
         }
         std::cout << std::endl;
     }
 }
 
-int* createImage(int height, int width) {
-    int* image = (int*)malloc(width * height * sizeof(int));
+long long int* createImage(int height, int width) {
+    long long int* image = (long long int*)malloc(width * height * sizeof(long long int));
     for (int i = 0; i < width * height; i++) {
         image[i] = i + 1;
     }
     return image;
 }
 
-int* integralImage_naive(int* image, int width, int height) {
-    int* integImg = (int*)malloc(width * height * sizeof(int));
+long long int* integralImage_naive(long long int* image, int width, int height) {
+    long long int* integImg = (long long int*)malloc(width * height * sizeof(long long int));
 
     for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
@@ -37,7 +38,7 @@ int* integralImage_naive(int* image, int width, int height) {
     return integImg;
 }
 
-int* integralImage_optimized(int* image, int* integImg, int width, int height) {
+long long int* integralImage_optimized(long long int* image, long long int* integImg, int width, int height) {
 
     // Calcolo la prima riga
     integImg[0] = image[0];
@@ -62,14 +63,14 @@ int* integralImage_optimized(int* image, int* integImg, int width, int height) {
 }
 
 int main() {
-    int height = 10000;
-    int width = 10000;
+    int height = 1024*8;
+    int width = 1024*8;
     bool printOutput = false;
     bool naive = false;
 
-    int* image = createImage(height, width);
-    int* integImg = (int*)malloc(width * height * sizeof(int));
-    int* integImg_opt = (int*)malloc(width * height * sizeof(int));
+    long long int* image = createImage(height, width);
+    long long int* integImg = (long long int*)malloc(width * height * sizeof(long long int));
+    long long int* integImg_opt = (long long int*)malloc(width * height * sizeof(long long int));
 
     if (printOutput) {
         std::cout << "Immagine di input" << std::endl;
@@ -89,16 +90,21 @@ int main() {
         std::cout << "Tempo versione naive: " << totalTime.count() << " secondi\n" << std::endl;
     }
 
-    std::chrono::steady_clock::time_point start_opt = std::chrono::steady_clock::now();
+    auto start = std::chrono::steady_clock::now();
     integImg_opt = integralImage_optimized(image, integImg_opt, width, height);
-    std::chrono::duration<double> totalTime_opt = std::chrono::steady_clock::now() - start_opt;
+    auto end = std::chrono::steady_clock::now();
+    auto diff = end - start;
+
     if (printOutput) {
         std::cout << "Output versione ottimizzata" << std::endl;
         imagePrint(integImg_opt, width, height);
     }
 
-    double milliseconds_opt = totalTime_opt.count() * 1000.0;
-    std::cout << "Tempo versione ottimizzata: " << milliseconds_opt << " millisecondi" << std::endl;
+    double millis = std::chrono::duration<double, std::milli>(diff).count();
+
+    // Stampa il tempo trascorso in millisecondi
+    std::cout << "Tempo di esecuzione: " << millis << " millisecondi" << std::endl;
+
 
     free(image);
     free(integImg);
