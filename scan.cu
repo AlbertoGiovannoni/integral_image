@@ -9,6 +9,7 @@ __global__ void scanParallel(long long int *d_input, long long int *d_output, in
     int idx = threadIdx.x;
     int offset = row * inputSize;
 
+    // caricamento input nella memoria condivisa
     tmp[2 * idx] = d_input[offset + idx * 2]; // offset + idx rappresenta l'indice globale
     tmp[2 * idx + 1] = d_input[offset + idx * 2 + 1];
 
@@ -17,7 +18,7 @@ __global__ void scanParallel(long long int *d_input, long long int *d_output, in
         __syncthreads();
         int index = (idx + 1) * stride * 2 - 1;
         if (index < 2 * BLOCK_SIZE_S)
-            tmp[index] += tmp[index - stride];
+            tmp[index] += tmp[index - stride]; // accumulo valore a distanza "stride"
     }
 
     // Down Sweep
@@ -30,19 +31,21 @@ __global__ void scanParallel(long long int *d_input, long long int *d_output, in
     }
     __syncthreads();
 
+    // scrittura risultato in output
     d_output[offset + idx] = tmp[idx];
 
+    // salvataggio dell'ultimo elemento del blocco in sum
     if (idx == BLOCK_SIZE_S - 1) {
         sum[row] = tmp[idx];
     }
 
 }
 
-__global__ void add(long long int *output, int length, long long int *n) {
+__global__ void add(long long int *output, int length, long long int *sum) {
     int blockID = blockIdx.x;
 
     int blockOffset = blockID * length;
-    output[blockOffset] += n[blockID];
+    output[blockOffset] += sum[blockID];
 }
 
 void scan(long long int *d_input, long long int *d_output, long long int *sum,int inputSize, int blockSize){
@@ -54,36 +57,9 @@ void scan(long long int *d_input, long long int *d_output, long long int *sum,in
 
         // Esegui la scan sulla porzione corrente del vettore di input
         scanParallel<<<inputSize, blockSize>>>(d_input + offset, d_output + offset, inputSize, sum);
-        // Esegui l'add sulla porzione corrente del vettore di output
+
+        // Aggiunge l'ultimo elemento del blocco precedente al primo del successivo
         if (i < numBlocks - 1)
             add<<<inputSize, 1>>>(d_input + blockSize * (i + 1), inputSize, sum);
     }
 }
-
-/*int main2() {
-    const int inputSize = INPUT_SIZE;
-    const int blockSize = BLOCK_SIZE;
-    bool printOutput = true;
-    //const int inputBytes = inputSize * inputSize * sizeof(int); // matrici quadrate
-    const long long int longBytes = inputSize * inputSize * sizeof(long long int);
-    const int numBlocks = (inputSize + blockSize - 1) / blockSize;
-
-
-    long long int *h_input = (long long int *) malloc(longBytes);
-    // Popolo la matrice
-    int c = 1;
-    for (int j = 0; j < inputSize; j++) {
-        for (int i = 0; i < inputSize; i++) {
-            h_input[j * inputSize + i] = c;
-            c++;
-        }
-    }
-
-    long long int *h_output = (long long int *) malloc(longBytes);
-    //scan(h_input, h_output, inputSize, blockSize, printOutput);
-
-
-    free(h_input);
-    free(h_output);
-    return 0;
-}*/
