@@ -1,1 +1,1 @@
-[Visualizza il PDF](./Integral_image.pdf)
+Relazione del Progetto: [Visualizza il PDF](./Integral_image.pdf)
